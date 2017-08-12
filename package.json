@@ -1,0 +1,12 @@
+{
+  "name": "calliope-editor",
+  "version": "0.0.1",
+  "main": "main.js",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^1.7.5"
+  },
+  "scripts": {
+    "run": "electron ."
+  }
+}
