@@ -45,11 +45,6 @@ function createWindow( calliope ) {
 		show: false,
 	} );
 
-	Dialog.showMessageBox( win, {
-		message: calliope.detailsFilename,
-		title: calliope.pathname,
-	} );
-
 	win.setMenu( null );
 
 	win.loadURL( Url.format( {
