@@ -28,60 +28,110 @@
 
 "use strict";
 
-const { app: App, BrowserWindow, dialog: Dialog } = require( "electron" );
+const {
+	app: App,
+	BrowserWindow,
+	dialog: Dialog,
+	session: Session,
+} = require( "electron" );
 
 const Path = require( "path" );
+const File = require( "fs" );
 const Url = require( "url" );
 
 const Calliope = require( "./lib/calliope" );
+const Html = require( "./lib/html" );
+const Locale = require( "./lib/locale" );
 
 
-let win;
+let mainWindow, splashWindow;
 
 function createWindow( calliope ) {
-	win = new BrowserWindow( {
-		width: 800,
-		height: 600,
+	/*
+	 * Create splash window to appear until content of main window has been
+	 * loaded.
+	 */
+	splashWindow = new BrowserWindow( {
+		width: 200,
+		height: 200,
 		show: false,
+		frame: false,
+		fullscreenable: false,
+		resizable: false,
+		center: true,
+		transparent: true,
 	} );
 
-	win.setMenu( null );
+	splashWindow.setMenu( null );
 
-	win.loadURL( Url.format( {
-		pathname: Path.resolve( __dirname, "index.html" ),
-		protocol: "file",
-		slashes: true,
-		defaultFont: "sans-serif",
-	} ) );
+	File.readFile( Path.resolve( __dirname, "package.json" ), ( error, content ) => {
+		if ( error ) {
+			console.error( "missing package.json" );
+			return App.quit();
+		}
 
-	//win.webContents.openDevTools();
+		const pkg = JSON.parse( content );
 
-	win.once( "ready-to-show", () => win.show() );
-
-	win.on( "closed", () => {
-		win = null;
+		Html.fileToDataUri( Path.resolve( __dirname, "splash.html" ), { version: pkg.version } )
+			.then( uri => splashWindow.loadURL( uri, {
+				baseURLForDataURL: Url.format( {
+					protocol: "file",
+					pathname: __dirname,
+					slashes: true,
+				} ) + "/"
+			} ) );
 	} );
 
-	win.webContents.session.on( "will-download", ( event, item ) => {
+	splashWindow.once( "ready-to-show", () => splashWindow.show() );
+	splashWindow.on( "closed", () => splashWindow = null );
+
+
+	/*
+	 * Create main window and load website containing editor code.
+	 */
+	mainWindow = new BrowserWindow( {
+		width: 1024,
+		height: 768,
+		show: false,
+		webPreferences: {
+			session: Session.fromPartition( "persist:calliope-editor", {
+				cache: true
+			} ),
+		}
+	} );
+
+	mainWindow.setMenu( null );
+
+	mainWindow.loadURL( "https://pxt.calliope.cc/" );
+
+	mainWindow.once( "ready-to-show", () => {
+		splashWindow.close();
+		mainWindow.show();
+	} );
+
+	mainWindow.on( "closed", () => mainWindow = null );
+
+
+	/*
+	 * customize content of main window
+	 */
+	let content = mainWindow.webContents;
+
+	// content.openDevTools();
+
+	// always store downloads in folder detected to be provided by Calliope
+	content.session.on( "will-download", ( event, item ) => {
 		item.setSavePath( Path.resolve( calliope.pathname, "mini.hex" ) );
 	} );
 
-	win.webContents.on( "new-window", ( event, url ) => {
+	// always open requested URL in main window rather than opening new window
+	content.on( "new-window", ( event, url ) => {
 		event.preventDefault();
-		win.loadURL( url );
+		mainWindow.loadURL( url );
 	} );
 }
 
-App.on( "ready", () => {
-	Calliope.find()
-		.then( createWindow, error => {
-			Dialog.showMessageBox( {
-				type: "error",
-				message: error.message,
-				title: "Starting Calliope Editor failed.",
-			}, () => App.quit() );
-		} );
-} );
+App.on( "ready", findDevice );
 
 App.on( "window-all-closed", () => {
 	if ( process.platform !== "darwin" ) {
@@ -90,7 +140,24 @@ App.on( "window-all-closed", () => {
 } );
 
 App.on( "activate", () => {
-	if ( win === null ) {
+	if ( mainWindow === null ) {
 		createWindow();
 	}
 } );
+
+
+
+function findDevice(){
+	Calliope.find()
+		.then( createWindow, error => {
+			Dialog.showMessageBox( {
+				type: "error",
+				message: error.message,
+				title: Locale.current.map.FAILED_START_TITLE,
+				buttons: [
+					Locale.current.map.BTN_YES,
+					Locale.current.map.BTN_NO,
+				]
+			}, clickedButtonIndex => clickedButtonIndex > 0 ? App.quit() : setImmediate( findDevice ) );
+		} );
+}
