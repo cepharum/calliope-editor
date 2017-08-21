@@ -28,11 +28,18 @@
 
 "use strict";
 
+const Path = require( "path" );
+const SevenZip = require( "7zip-bin" );
+
+
+
 module.exports = function( grunt ) {
 
 	grunt.initConfig( {
 		clean: {
 			publish: [ ".publish" ],
+			sass: [ ".publish/assets/**.scss" ],
+			buildAll: [ ".build/**/*" ],
 			build: [ ".build/**/*", "!.build/*.zip" ],
 		},
 		copy: {
@@ -42,6 +49,7 @@ module.exports = function( grunt ) {
 						expand: true,
 						src: [
 							"assets/**",
+							"!assets/*.css*",
 							"lib/**",
 							"locale/**",
 							"*.html",
@@ -55,6 +63,37 @@ module.exports = function( grunt ) {
 				]
 			}
 		},
+		sass: {
+			publish: {
+				files: [ {
+					expand: true,
+					src: [ ".publish/assets/*.scss" ],
+					ext: ".css",
+				} ],
+			}
+		},
+		drop_fonts: {
+			publish: {
+				fonts: {
+					cwd: ".publish/assets/",
+					src: [ "font/**/*.{otf,ttf,woff,woff2,svg}" ],
+				},
+				styles: {
+					cwd: ".publish/assets/",
+					src: [ "*.css" ],
+				}
+			}
+		},
+		cssmin: {
+			publish: {
+				files: [ {
+					expand: true,
+					cwd: ".publish/assets",
+					src: [ "*.css" ],
+					dest: ".publish/assets",
+				} ]
+			}
+		},
 		auto_install: {
 			publish: {
 				options: {
@@ -65,76 +104,120 @@ module.exports = function( grunt ) {
 			}
 		},
 		"electron-packager": {
-			win32_32: {
+			allOfCurrentPlatform: {
 				options: {
-					platform: "win32",
-					arch: "ia32",
+					arch: "all",
 					dir: ".publish",
 					out: ".build",
-					name: "calliope-editor",
 					asar: true,
 					overwrite: true,
-				},
-			},
-			win32_64: {
-				options: {
-					platform: "win32",
-					arch: "x64",
-					dir: ".publish",
-					out: ".build",
-					name: "calliope-editor",
-					asar: true,
-					overwrite: true,
-				},
-			},
-			macos_64: {
-				options: {
-					platform: "darwin",
-					arch: "x64",
-					dir: ".publish",
-					out: ".build",
-					name: "calliope-editor",
-					asar: true,
-					overwrite: true,
+					prune: true,
+					win32metadata: {
+						CompanyName: "cepharum GmbH",
+					},
 				},
 			},
 		},
 		zip: {
-			win32_32: {
-				cwd: ".build/calliope-editor-win32-ia32/",
-				src: [".build/calliope-editor-win32-ia32/**"],
-				dest: ".build/calliope-editor-win32-ia32.zip",
-			},
-			win32_64: {
-				cwd: ".build/calliope-editor-win32-x64/",
-				src: [".build/calliope-editor-win32-x64/**"],
-				dest: ".build/calliope-editor-win32-x64.zip",
-			},
-			macos_64: {
-				cwd: ".build/calliope-editor-darwin-x64/",
-				src: [".build/calliope-editor-darwin-x64/**"],
-				dest: ".build/calliope-editor-macos-x64.zip",
+			build: {
+				expand: true,
+				cwd: ".build/",
+				src: ["*", "!*.zip"],
+				dest: ".build/",
 			},
 		},
 	} );
 
 	grunt.loadNpmTasks( "grunt-contrib-clean" );
 	grunt.loadNpmTasks( "grunt-contrib-copy" );
+	grunt.loadNpmTasks( "grunt-sass" );
 	grunt.loadNpmTasks( "grunt-auto-install" );
+	grunt.loadNpmTasks( "grunt-contrib-cssmin" );
 	grunt.loadNpmTasks( "grunt-electron-packager" );
 	grunt.loadNpmTasks( "grunt-zip" );
 
+	grunt.registerMultiTask( "drop_fonts", "Drop all but used font files.", function() {
+		const fontsConfig = this.data.fonts;
+		const stylesConfig = this.data.styles;
+
+		const fonts = grunt.file.expand( fontsConfig, fontsConfig.src );
+		const styles = grunt.file.expand( stylesConfig, stylesConfig.src );
+
+		let patterns = {};
+		fonts
+			.forEach( pathname => {
+				patterns[pathname] = new RegExp( "\\(\\s*[\"']?" + pathname + "[?\"']?\\s*\\)" );
+			} );
+
+		let used = {};
+		styles
+			.map( fname => grunt.file.read( fname, { encoding: "utf8" } ) )
+			.forEach( css => {
+				Object.keys( patterns )
+					.forEach( name => {
+						if ( patterns[name].test( css ) ) {
+							delete patterns[name];
+						}
+					} );
+			} );
+
+		if ( !Object.keys( patterns )
+			.every( pathname => grunt.file.delete( Path.resolve( fontsConfig.cwd, pathname ) ) ) ) {
+			grunt.error( "failed removing font file " + pathname );
+		}
+	} );
+
+	grunt.registerMultiTask( "zip", "Zip folders.", function() {
+		const config = this.data;
+
+		const tasks = grunt.file.expandMapping( config.src, config.dest, config );
+
+		const done = this.async();
+
+		run();
+
+		function run() {
+			if ( !tasks.length ) {
+				return done();
+			}
+
+			let {src} = tasks.shift();
+
+			const args = [
+				"a",
+				"-r",
+				"-mx9",
+				"-tzip",
+				Path.resolve( __dirname, config.dest, Path.basename( src[0] ) + ".zip" ),
+			].concat( src.map( fname => Path.resolve( __dirname, fname, "*" ) ) );
+
+			grunt.util.spawn( {
+				cmd: SevenZip.path7za,
+				args,
+			}, ( error, result, code ) => {
+				if ( error ) {
+					return done( error );
+				}
+				if ( code ) {
+					return done( new Error( "running 7zip exited with " + code ) );
+				}
+
+				setImmediate( run );
+			} );
+		}
+	} );
+
 	grunt.registerTask( "publish", [
 		"clean:publish",
-		"clean:build",
+		"clean:buildAll",
 		"copy:publish",
+		"sass:publish",
+		"clean:sass",
+		"drop_fonts:publish",
+		"cssmin:publish",
 		"auto_install:publish",
-		"electron-packager:win32_32",
-		"electron-packager:win32_64",
-		"electron-packager:macos_64",
-		"zip:win32_32",
-		"zip:win32_64",
-		"zip:macos_64",
+		"electron-packager:allOfCurrentPlatform",
+		"zip:build",
 		"clean:publish",
 		"clean:build",
 	] );
