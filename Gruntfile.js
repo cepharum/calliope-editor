@@ -79,8 +79,7 @@ module.exports = function( grunt ) {
 					src: [ "font/**/*.{otf,ttf,woff,woff2,svg}" ],
 				},
 				styles: {
-					cwd: ".publish/assets/",
-					src: [ "*.css" ],
+					src: [".publish/assets/*.css"],
 				}
 			}
 		},
